@@ -1,0 +1,224 @@
+#!/usr/bin/env python3
+"""
+StealthShark - Simple Tshark Channel Monitor
+Direct tshark monitoring with 4-hour rotation and channel separation
+"""
+
+import os
+import sys
+import time
+import signal
+import subprocess
+import threading
+import json
+from datetime import datetime
+from pathlib import Path
+import logging
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logger = logging.getLogger(__name__)
+
+class SimpleTsharkMonitor:
+    def __init__(self, base_dir):
+        self.base_dir = Path(base_dir)
+        self.capture_dir = self.base_dir / "channel_captures"
+        self.capture_dir.mkdir(exist_ok=True)
+        
+        self.log_file = self.base_dir / "simple_monitor.log"
+        self.active_captures = {}
+        self.running = True
+        
+        # Setup signal handlers for graceful shutdown
+        signal.signal(signal.SIGINT, self.signal_handler)
+        signal.signal(signal.SIGTERM, self.signal_handler)
+        
+    def signal_handler(self, signum, frame):
+        """Handle shutdown signals gracefully"""
+        logger.info(f"Received signal {signum}, shutting down...")
+        self.running = False
+        self.stop_all_captures()
+        sys.exit(0)
+        
+    def start_capture(self, interface, stealth_name=None):
+        """Start tshark capture on specified interface"""
+        if interface in self.active_captures:
+            logger.warning(f"Capture already running on {interface}")
+            return False
+            
+        try:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{interface}_capture_{timestamp}.pcapng"
+            filepath = self.capture_dir / filename
+            
+            # Build command - use stealth process name if provided
+            if stealth_name:
+                cmd = [
+                    'exec', '-a', stealth_name,
+                    'tshark', '-i', interface,
+                    '-w', str(filepath),
+                    '-b', 'duration:14400',  # 4 hours in seconds
+                    '-b', 'files:6',  # Keep 6 files (24 hours total)
+                    '-q'  # Quiet mode
+                ]
+            else:
+                cmd = [
+                    'tshark', '-i', interface,
+                    '-w', str(filepath),
+                    '-b', 'duration:14400',  # 4 hours in seconds
+                    '-b', 'files:6',  # Keep 6 files (24 hours total)
+                    '-q'  # Quiet mode
+                ]
+            
+            # Start the process
+            process = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                preexec_fn=os.setsid  # Create new process group
+            )
+            
+            self.active_captures[interface] = {
+                'process': process,
+                'pid': process.pid,
+                'start_time': datetime.now(),
+                'filepath': filepath,
+                'stealth_name': stealth_name or 'tshark'
+            }
+            
+            logger.info(f"Started capture on {interface} (PID: {process.pid})")
+            if stealth_name:
+                logger.info(f"Process disguised as: {stealth_name}")
+                
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to start capture on {interface}: {e}")
+            return False
+            
+    def stop_capture(self, interface):
+        """Stop capture on specified interface"""
+        if interface not in self.active_captures:
+            logger.warning(f"No active capture on {interface}")
+            return False
+            
+        try:
+            capture_info = self.active_captures[interface]
+            process = capture_info['process']
+            
+            # Terminate the process group
+            os.killpg(os.getpgid(process.pid), signal.SIGTERM)
+            
+            # Wait for process to terminate
+            try:
+                process.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                logger.warning(f"Force killing capture on {interface}")
+                os.killpg(os.getpgid(process.pid), signal.SIGKILL)
+                process.wait()
+                
+            logger.info(f"Stopped capture on {interface}")
+            del self.active_captures[interface]
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to stop capture on {interface}: {e}")
+            return False
+            
+    def stop_all_captures(self):
+        """Stop all active captures"""
+        interfaces = list(self.active_captures.keys())
+        for interface in interfaces:
+            self.stop_capture(interface)
+            
+    def get_status(self):
+        """Get status of all captures"""
+        status = {
+            'timestamp': datetime.now().isoformat(),
+            'active_captures': len(self.active_captures),
+            'captures': {}
+        }
+        
+        for interface, info in self.active_captures.items():
+            runtime = datetime.now() - info['start_time']
+            status['captures'][interface] = {
+                'pid': info['pid'],
+                'stealth_name': info['stealth_name'],
+                'runtime_seconds': int(runtime.total_seconds()),
+                'runtime_hours': round(runtime.total_seconds() / 3600, 2),
+                'filepath': str(info['filepath']),
+                'status': 'running' if info['process'].poll() is None else 'stopped'
+            }
+            
+        return status
+        
+    def monitor_loop(self):
+        """Main monitoring loop"""
+        logger.info("Starting monitoring loop...")
+        
+        while self.running:
+            try:
+                # Check for dead processes
+                dead_interfaces = []
+                for interface, info in self.active_captures.items():
+                    if info['process'].poll() is not None:
+                        logger.warning(f"Process for {interface} has died")
+                        dead_interfaces.append(interface)
+                
+                # Clean up dead processes
+                for interface in dead_interfaces:
+                    del self.active_captures[interface]
+                    logger.info(f"Cleaned up dead process for {interface}")
+                
+                # Save status
+                status = self.get_status()
+                status_file = self.base_dir / "monitor_status.json"
+                with open(status_file, 'w') as f:
+                    json.dump(status, f, indent=2)
+                
+                time.sleep(30)  # Check every 30 seconds
+                
+            except Exception as e:
+                logger.error(f"Error in monitoring loop: {e}")
+                time.sleep(60)  # Wait longer on error
+
+def main():
+    """Main entry point"""
+    if len(sys.argv) < 2:
+        print("Usage: python3 simple_tshark_monitor.py <interface1> [interface2] ...")
+        print("Example: python3 simple_tshark_monitor.py en0 en1 awdl0")
+        sys.exit(1)
+    
+    # Get interfaces from command line
+    interfaces = sys.argv[1:]
+    
+    # Initialize monitor
+    base_dir = Path(__file__).parent
+    monitor = SimpleTsharkMonitor(base_dir)
+    
+    # Stealth process names
+    stealth_names = [
+        "kernel_task", "launchd", "UserEventAgent", 
+        "WindowServer", "Finder", "SystemUIServer"
+    ]
+    
+    try:
+        # Start captures on all interfaces
+        for i, interface in enumerate(interfaces):
+            stealth_name = stealth_names[i % len(stealth_names)]
+            if monitor.start_capture(interface, stealth_name):
+                logger.info(f"Successfully started monitoring {interface}")
+            else:
+                logger.error(f"Failed to start monitoring {interface}")
+        
+        # Start monitoring loop
+        monitor.monitor_loop()
+        
+    except KeyboardInterrupt:
+        logger.info("Received interrupt signal")
+    finally:
+        logger.info("Shutting down...")
+        monitor.stop_all_captures()
+        logger.info("Shutdown complete")
+
+if __name__ == "__main__":
+    main()
