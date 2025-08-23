@@ -248,7 +248,8 @@ class PersistentWiresharkMonitor:
                 'start_time': datetime.now(),
                 'capture_file': capture_file,
                 'capture_filename': capture_filename,
-                'interface_group': interface_group
+                'interface_group': interface_group,
+                'duration': self.capture_duration
             }
             
             self.logger.info(f"✅ Started capture on {interface} -> {capture_filename}")
@@ -282,16 +283,28 @@ class PersistentWiresharkMonitor:
         
         # Wait for process to complete or timeout
         try:
-            process.wait(timeout=duration + 30)  # Extra 30 seconds buffer
+            process.wait(timeout=duration + 5)  # Small buffer for cleanup
         except subprocess.TimeoutExpired:
-            self.logger.warning(f"Capture on {interface} timed out, terminating")
+            self.logger.info(f"Capture on {interface} reached duration limit ({duration}s), terminating")
             process.terminate()
+            try:
+                process.wait(timeout=5)  # Wait for graceful termination
+            except subprocess.TimeoutExpired:
+                self.logger.warning(f"Force killing capture process on {interface}")
+                process.kill()
             
-        # Move completed capture to completed directory
+        # Clean up completed capture
         if interface in self.active_captures:
             capture_file = self.active_captures[interface]['capture_file']
+            self.logger.info(f"🏁 Capture completed on {interface} after {duration}s")
+            
+            # Remove from active captures
+            del self.active_captures[interface]
+            
+            # Log file size if exists
             if capture_file.exists():
-                completed_file = self.capture_dir / "completed" / capture_file.name
+                file_size = capture_file.stat().st_size
+                self.logger.info(f"📊 PCAP file size: {file_size} bytes - {capture_file.name}")
     def check_new_interfaces(self):
         """Check for new interfaces that weren't previously monitored"""
         current_interfaces = set()
