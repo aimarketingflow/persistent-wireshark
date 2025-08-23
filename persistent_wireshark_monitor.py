@@ -49,10 +49,13 @@ class PersistentWiresharkMonitor:
         self.running = True
         self.capture_processes = {}
         
-        # Setup
-        self.setup_directories()
+        # Setup logging
         self.setup_logging()
-        self.discover_interfaces()
+        
+        # Create session directory for this monitoring session
+        self.session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        self.session_dir = Path(self.capture_dir) / f"session_{self.session_timestamp}"
+        self.session_dir.mkdir(parents=True, exist_ok=True)
         
         # Signal handlers (only in main thread)
         try:
@@ -207,15 +210,35 @@ class PersistentWiresharkMonitor:
         self.logger.info(f"🏷️  GROUP: {interface_group} | INTERFACE: {interface}")
         
         try:
-            # Use tshark for capture with rotation
-            cmd = [
-                'tshark',
-                '-i', interface,
-                '-w', str(capture_file_abs),
-                '-a', f'duration:{self.capture_duration}',  # Auto-stop after duration
-                '-b', 'files:5',  # Keep max 5 files per interface
-                '-q'  # Quiet mode
+            # Try multiple capture methods to avoid password prompts
+            capture_methods = [
+                # Method 1: Direct tcpdump (works if ChmodBPF is installed)
+                ['tcpdump', '-i', interface, '-w', str(capture_file_abs), '-s', '0', '-q'],
+                # Method 2: Sudo tcpdump with NOPASSWD configured
+                ['sudo', 'tcpdump', '-i', interface, '-w', str(capture_file_abs), '-s', '0', '-q'],
+                # Method 3: Tcpdump wrapper
+                ['/usr/local/bin/tcpdump_wrapper', '-i', interface, '-w', str(capture_file_abs), '-s', '0', '-q']
             ]
+            
+            cmd = None
+            for method in capture_methods:
+                try:
+                    # Test if the command exists and is accessible
+                    test_process = subprocess.Popen(method + ['-c', '0'], 
+                                                  stdout=subprocess.PIPE, 
+                                                  stderr=subprocess.PIPE)
+                    test_process.wait()
+                    if test_process.returncode == 0:
+                        cmd = method
+                        self.logger.info(f"Using capture method: {' '.join(method[:2])}")
+                        break
+                except (FileNotFoundError, PermissionError):
+                    continue
+            
+            if not cmd:
+                # Fallback to sudo method
+                cmd = ['sudo', 'tcpdump', '-i', interface, '-w', str(capture_file_abs), '-s', '0', '-q']
+                self.logger.warning("Using sudo fallback - may require password")
             
             process = subprocess.Popen(cmd, stdout=subprocess.PIPE, 
                                      stderr=subprocess.PIPE)
@@ -355,10 +378,13 @@ class PersistentWiresharkMonitor:
         self.logger.info(f"Capture duration: {self.capture_duration} seconds")
         self.logger.info(f"Check interval: {self.check_interval} seconds")
         
+        iteration = 0
         try:
             while self.running:
+                iteration += 1
+                
                 # Check for active interfaces
-                active_interfaces = self.check_active_interfaces()
+                active_interfaces = self.detect_active_interfaces()
                 
                 if active_interfaces:
                     self.logger.info(f"Found {len(active_interfaces)} active interfaces")
@@ -369,7 +395,16 @@ class PersistentWiresharkMonitor:
                         for interface, capture_info in self.active_captures.items():
                             group = capture_info.get('interface_group', 'unknown')
                             monitored_channels.append(f"{interface}({group})")
-                        self.logger.info(f" ACTIVELY MONITORING: {', '.join(monitored_channels)}")
+                        self.logger.info(f"📡 ACTIVELY MONITORING: {', '.join(monitored_channels)}")
+                    
+                    for interface_info in active_interfaces:
+                        interface = interface_info['interface']
+                        
+                        # Start capture if not already running
+                        if interface not in self.active_captures:
+                            self.start_capture(interface)
+                
+                # Cleanup and reporting
                 if iteration % 100 == 0:
                     self.cleanup_old_captures()
                     
@@ -379,17 +414,77 @@ class PersistentWiresharkMonitor:
                     self.logger.info(f"Status: {len(self.active_captures)} active captures, "
                                    f"{len(self.monitored_interfaces)} monitored interfaces")
                 
+                # Sleep for check interval
                 time.sleep(self.check_interval)
                 
-            except KeyboardInterrupt:
-                self.logger.info("Received interrupt signal, shutting down...")
-                break
-            except Exception as e:
-                self.logger.error(f"Error in main loop: {e}")
-                time.sleep(self.check_interval)
-                
-        self.shutdown()
+        except KeyboardInterrupt:
+            self.logger.info("Received interrupt signal, shutting down...")
+        except Exception as e:
+            self.logger.error(f"Unexpected error in main loop: {e}")
+        finally:
+            self.cleanup()
         
+    def cleanup(self):
+        """Clean up resources and terminate processes"""
+        self.logger.info("Cleaning up resources...")
+        self.running = False
+        
+        # Terminate all active captures
+        for interface in list(self.active_captures.keys()):
+            self.stop_capture(interface)
+            
+        self.logger.info("Cleanup completed")
+        
+    def detect_active_interfaces(self):
+        """Detect network interfaces with recent activity"""
+        active_interfaces = []
+        
+        try:
+            # Get current network statistics
+            current_stats = psutil.net_io_counters(pernic=True)
+            current_time = datetime.now()
+            
+            for interface, stats in current_stats.items():
+                # Skip virtual interfaces we don't want to monitor
+                if interface.startswith(('vnic', 'bridge', 'ap')):
+                    continue
+                    
+                # Get previous stats for this interface
+                prev_stats = self.interface_stats.get(interface, {'packets': 0, 'bytes': 0})
+                
+                # Calculate differences
+                packet_diff = stats.packets_sent + stats.packets_recv - prev_stats['packets']
+                byte_diff = stats.bytes_sent + stats.bytes_recv - prev_stats['bytes']
+                
+                # Update stored stats
+                self.interface_stats[interface] = {
+                    'packets': stats.packets_sent + stats.packets_recv,
+                    'bytes': stats.bytes_sent + stats.bytes_recv,
+                    'last_activity': current_time if packet_diff > 0 else prev_stats.get('last_activity')
+                }
+                
+                # Consider interface active if it has recent activity or is in default set
+                if packet_diff > 0 or interface in self.default_interfaces:
+                    active_interfaces.append({
+                        'interface': interface,
+                        'packets': packet_diff,
+                        'bytes': byte_diff,
+                        'total_packets': stats.packets_sent + stats.packets_recv,
+                        'total_bytes': stats.bytes_sent + stats.bytes_recv
+                    })
+                    
+                    # Store in history
+                    self.interface_history[interface].append({
+                        'timestamp': current_time,
+                        'packets': packet_diff,
+                        'bytes': byte_diff
+                    })
+                    
+        except Exception as e:
+            self.logger.error(f"Error detecting active interfaces: {e}")
+            
+        return active_interfaces
+
     def shutdown(self):
         """Gracefully shutdown all captures"""
         self.logger.info("Shutting down persistent Wireshark monitor...")
@@ -433,13 +528,13 @@ def main():
     parser.add_argument('--capture-dir', default='./pcap_captures',
                        help='Directory to store PCAP files')
     parser.add_argument('--duration', type=int, default=30,
-                       help='Capture duration in seconds (30-21600, default: 30)')
+                       help='Capture duration: 30 seconds (30-21600, default: 30)')
     parser.add_argument('--interval', type=int, default=5,
                        help='Check interval in seconds (default: 5)')
     parser.add_argument('--no-alerts', action='store_true',
                        help='Disable alert notifications')
     parser.add_argument('--status', action='store_true',
-                       help='Show current status and exit')
+                       help='Show status and exit')
     
     args = parser.parse_args()
     

@@ -23,7 +23,7 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                             QWidget, QPushButton, QLabel, QTextEdit, QTableWidget, 
                             QTableWidgetItem, QProgressBar, QGroupBox, QLineEdit,
                             QCheckBox, QSlider, QFileDialog, QListWidget, QSplitter,
-                            QMessageBox, QComboBox)
+                            QMessageBox, QComboBox, QTabWidget)
 from PyQt6.QtCore import QTimer, QThread, pyqtSignal, Qt, QSize, QObject
 from PyQt6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
 import psutil

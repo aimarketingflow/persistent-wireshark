@@ -65,3 +65,18 @@ Icon
 # User-specific files
 config.local
 settings.local
+
+# Security - exclude any sensitive data
+*.key
+*.pem
+*.p12
+*.pfx
+secrets/
+credentials/
+.env
+.env.local
+emergency_session_state.json
+
+# Persistent logs with potentially sensitive data
+persistent_logs/
+persistent_wireshark_output/

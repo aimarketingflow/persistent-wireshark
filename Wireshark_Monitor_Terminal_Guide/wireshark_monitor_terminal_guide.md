@@ -6,7 +6,7 @@
 
 ```bash
 # Navigate to monitor directory
-cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor
+cd /path/to/Persistent_Wireshark_Monitor
 
 # Setup virtual environment (first time only)
 python3 cli_wireshark_monitor.py --setup-only
@@ -106,11 +106,11 @@ Add to your `~/.zshrc`:
 
 ```bash
 # Wireshark Monitor Aliases
-alias wireshark_gui='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 wireshark_monitor_gui.py'
-alias wireshark_start='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 cli_wireshark_monitor.py'
-alias wireshark_status='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 cli_wireshark_monitor.py --status'
-alias wireshark_test='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 test_monitor.py'
-alias wireshark_5min='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 cli_wireshark_monitor.py --duration 300'
+alias wireshark_gui='cd /path/to/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 wireshark_monitor_gui.py'
+alias wireshark_start='cd /path/to/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 cli_wireshark_monitor.py'
+alias wireshark_status='cd /path/to/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 cli_wireshark_monitor.py --status'
+alias wireshark_test='cd /path/to/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 test_monitor.py'
+alias wireshark_5min='cd /path/to/Persistent_Wireshark_Monitor && ./wireshark_monitor_venv/bin/python3 cli_wireshark_monitor.py --duration 300'
 ```
 
 ### GUI Usage Instructions

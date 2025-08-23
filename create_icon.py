@@ -122,7 +122,7 @@ def main():
         print("⚠️ Could not create ICNS file")
     
     # Copy to app bundle
-    app_bundle = "/Users/flowgirl/Desktop/Wireshark Monitor.app/Contents/Resources"
+    app_bundle = "./Wireshark Monitor.app/Contents/Resources"
     os.makedirs(app_bundle, exist_ok=True)
     
     try:

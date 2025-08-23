@@ -35,7 +35,7 @@ pcap_captures/
 
 ### 1. Navigate to Monitor Directory
 ```bash
-cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor
+cd /path/to/Persistent_Wireshark_Monitor
 ```
 
 ### 2. Setup Virtual Environment
@@ -185,10 +185,10 @@ Options:
 
 Add to your `~/.zshrc`:
 ```bash
-alias start_wireshark_monitor='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py'
-alias wireshark_status='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py --status'
-alias wireshark_5min='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py --duration 300'
-alias wireshark_1hr='cd /Users/flowgirl/Documents/_Behavioral_Cybersec_Analysis/Amazon-exploit-via-phone/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py --duration 3600'
+alias start_wireshark_monitor='cd /path/to/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py'
+alias wireshark_status='cd /path/to/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py --status'
+alias wireshark_5min='cd /path/to/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py --duration 300'
+alias wireshark_1hr='cd /path/to/Persistent_Wireshark_Monitor && python3 cli_wireshark_monitor.py --duration 3600'
 ```
 
 ## Security Considerations
