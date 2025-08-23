@@ -6,19 +6,24 @@ Includes extensive error handling and debugging capabilities
 """
 
 import sys
+import os
 import json
+import signal
+import psutil
+import glob
 import threading
 import time
 import subprocess
 import traceback
 import logging
+import atexit
 from datetime import datetime, timedelta
 from pathlib import Path
 from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout, 
                             QWidget, QPushButton, QLabel, QTextEdit, QTableWidget, 
                             QTableWidgetItem, QProgressBar, QGroupBox, QLineEdit,
-                            QCheckBox, QSpinBox, QTabWidget, QMessageBox, QComboBox,
-                            QSlider, QFileDialog, QListWidget, QSplitter)
+                            QCheckBox, QSlider, QFileDialog, QListWidget, QSplitter,
+                            QMessageBox, QComboBox)
 from PyQt6.QtCore import QTimer, QThread, pyqtSignal, Qt, QSize, QObject
 from PyQt6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
 import psutil
@@ -155,13 +160,26 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.logger = logging.getLogger("WiresharkGUI")
-        self.logger.info("Initializing Enhanced Wireshark Monitor GUI")
+        self.logger.info("Initializing Enhanced Wireshark Monitor GUI v2")
         
         try:
             self.monitor_thread = None
             self.capture_dir = Path("./pcap_captures")
-            self.duration = 3600  # 1 hour default
+            self.duration = 30  # 30 seconds default for testing
             self.interval = 5     # 5 seconds default
+            
+            # Timer tracking
+            self.start_time = None
+            self.timer_update = None
+            
+            # Auto-restart settings
+            self.auto_restart_enabled = True
+            
+            # Persistent logging
+            self.setup_persistent_logging()
+            
+            # Setup exit handlers for auto-save
+            self.setup_exit_handlers()
             
             self.logger.info(f"Initial config: dir={self.capture_dir}, duration={self.duration}, interval={self.interval}")
             
@@ -174,6 +192,82 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
             self.logger.error(f"GUI initialization error: {e}")
             self.logger.error(traceback.format_exc())
             self.show_error_dialog("Initialization Error", f"Failed to initialize GUI: {e}")
+            
+    def setup_persistent_logging(self):
+        """Setup persistent logging to dedicated folder"""
+        try:
+            # Create persistent logs directory
+            persistent_log_dir = Path("./persistent_logs")
+            persistent_log_dir.mkdir(exist_ok=True)
+            
+            # Create session-specific log file
+            session_timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            self.session_log_file = persistent_log_dir / f"wireshark_session_{session_timestamp}.log"
+            
+            # Setup file handler for persistent logging
+            file_handler = logging.FileHandler(self.session_log_file)
+            file_handler.setLevel(logging.INFO)
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            file_handler.setFormatter(formatter)
+            
+            # Add to logger
+            self.logger.addHandler(file_handler)
+            self.logger.info(f"Persistent logging initialized: {self.session_log_file}")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to setup persistent logging: {e}")
+            
+    def setup_exit_handlers(self):
+        """Setup handlers for graceful exit and auto-save"""
+        try:
+            import atexit
+            import signal
+            
+            # Register exit handler
+            atexit.register(self.emergency_save_and_cleanup)
+            
+            # Register signal handlers for crashes
+            signal.signal(signal.SIGTERM, self.signal_handler)
+            signal.signal(signal.SIGINT, self.signal_handler)
+            
+            self.logger.info("Exit handlers registered for auto-save protection")
+            
+        except Exception as e:
+            self.logger.error(f"Failed to setup exit handlers: {e}")
+            
+    def signal_handler(self, signum, frame):
+        """Handle system signals for graceful shutdown"""
+        self.logger.info(f"Received signal {signum}, initiating emergency save...")
+        self.emergency_save_and_cleanup()
+        sys.exit(0)
+        
+    def emergency_save_and_cleanup(self):
+        """Emergency save function called on exit/crash"""
+        try:
+            self.logger.info("🚨 EMERGENCY SAVE: Preserving capture data...")
+            
+            # Stop any active monitoring
+            if self.monitor_thread:
+                self.safe_stop_monitor()
+                
+            # Save current session state
+            session_state = {
+                'timestamp': datetime.now().isoformat(),
+                'duration': self.duration,
+                'interval': self.interval,
+                'auto_restart': self.auto_restart_enabled,
+                'capture_dir': str(self.capture_dir)
+            }
+            
+            # Save to emergency file
+            emergency_file = Path('./emergency_session_state.json')
+            with open(emergency_file, 'w') as f:
+                json.dump(session_state, f, indent=2)
+                
+            self.logger.info(f"✅ Emergency save completed: {emergency_file}")
+            
+        except Exception as e:
+            print(f"Emergency save failed: {e}")
             
     def show_error_dialog(self, title, message):
         """Show error dialog with logging"""
@@ -333,6 +427,15 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
             self.status_label.setStyleSheet("color: #ff6b6b; font-weight: bold;")
             control_layout.addWidget(self.status_label)
             
+            # Progress bar and timer
+            self.progress_bar = QProgressBar()
+            self.progress_bar.setVisible(False)
+            control_layout.addWidget(self.progress_bar)
+            
+            self.timer_label = QLabel("Timer: Not started")
+            self.timer_label.setStyleSheet("color: #ffffff; font-family: monospace;")
+            control_layout.addWidget(self.timer_label)
+            
             layout.addWidget(control_group)
             
             # Configuration Group
@@ -344,11 +447,12 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
             duration_layout.addWidget(QLabel("Capture Duration:"))
             self.duration_combo = QComboBox()
             self.duration_combo.addItems([
-                "1 minute (60s)", "5 minutes (300s)", "15 minutes (900s)",
-                "30 minutes (1800s)", "1 hour (3600s)", "2 hours (7200s)",
-                "5 hours (18000s)"
+                "30 seconds (30s)", "1 minute (60s)", "5 minutes (300s)", "10 minutes (600s)",
+                "20 minutes (1200s)", "30 minutes (1800s)", "1 hour (3600s)", 
+                "2 hours (7200s)", "3 hours (10800s)", "4 hours (14400s)", 
+                "5 hours (18000s)", "6 hours (21600s)"
             ])
-            self.duration_combo.setCurrentText("1 hour (3600s)")
+            self.duration_combo.setCurrentText("30 seconds (30s)")
             self.duration_combo.currentTextChanged.connect(self.safe_update_duration)
             duration_layout.addWidget(self.duration_combo)
             config_layout.addLayout(duration_layout)
@@ -376,6 +480,13 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
             self.dir_label = QLabel(str(self.capture_dir))
             self.dir_label.setWordWrap(True)
             config_layout.addWidget(self.dir_label)
+            
+            # Auto-restart option
+            self.auto_restart_checkbox = QCheckBox("Auto-restart after completion (recommended for continuous monitoring)")
+            self.auto_restart_checkbox.setChecked(True)  # Default enabled
+            self.auto_restart_checkbox.setStyleSheet("color: #ffffff; font-size: 12px;")
+            self.auto_restart_checkbox.stateChanged.connect(self.update_auto_restart)
+            config_layout.addWidget(self.auto_restart_checkbox)
             
             layout.addWidget(config_group)
             
@@ -475,10 +586,65 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
             self.update_timer.timeout.connect(self.safe_update_interface_stats)
             self.update_timer.start(5000)
             
+            # Timer for progress tracking
+            self.timer_update = QTimer()
+            self.timer_update.timeout.connect(self.update_progress_timer)
+            
             self.logger.info("Timers setup completed")
             
         except Exception as e:
             self.logger.error(f"Error setting up timers: {e}")
+            
+    def update_progress_timer(self):
+        """Update progress bar and timer display"""
+        try:
+            if not self.start_time:
+                return
+                
+            elapsed = datetime.now() - self.start_time
+            elapsed_seconds = int(elapsed.total_seconds())
+            remaining_seconds = max(0, self.duration - elapsed_seconds)
+            
+            # Update progress bar
+            progress = min(100, (elapsed_seconds / self.duration) * 100)
+            self.progress_bar.setValue(int(progress))
+            
+            # Format time display
+            elapsed_str = f"{elapsed_seconds//3600:02d}:{(elapsed_seconds%3600)//60:02d}:{elapsed_seconds%60:02d}"
+            remaining_str = f"{remaining_seconds//3600:02d}:{(remaining_seconds%3600)//60:02d}:{remaining_seconds%60:02d}"
+            
+            self.timer_label.setText(f"Elapsed: {elapsed_str} | Remaining: {remaining_str}")
+            
+            # Stop timer when complete
+            if remaining_seconds <= 0:
+                self.timer_update.stop()
+                self.progress_bar.setValue(100)
+                self.log_message("⏰ Capture session completed")
+                
+                # Check for auto-restart
+                if self.auto_restart_enabled:
+                    self.log_message("🔄 Auto-restart enabled - Starting new session in 3 seconds...")
+                    QTimer.singleShot(3000, self.auto_restart_session)
+                else:
+                    self.log_message("🛑 Auto-restart disabled - Stopping monitor")
+                    self.safe_stop_monitor()
+                
+        except Exception as e:
+            self.logger.error(f"Error updating progress timer: {e}")
+            
+    def update_auto_restart(self, state):
+        """Update auto-restart setting"""
+        self.auto_restart_enabled = state == Qt.CheckState.Checked.value
+        self.logger.info(f"Auto-restart {'enabled' if self.auto_restart_enabled else 'disabled'}")
+        
+    def auto_restart_session(self):
+        """Restart monitoring session with same settings"""
+        try:
+            self.log_message("🔄 Auto-restarting monitoring session...")
+            self.safe_start_monitor()
+        except Exception as e:
+            self.logger.error(f"Auto-restart failed: {e}")
+            self.log_message(f"❌ Auto-restart failed: {e}")
             
     def safe_refresh_interfaces(self):
         """Safely refresh the interface list"""
@@ -568,6 +734,12 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
             
             self.monitor_thread.start()
             
+            # Start progress tracking
+            self.start_time = datetime.now()
+            self.progress_bar.setVisible(True)
+            self.progress_bar.setValue(0)
+            self.timer_update.start(1000)  # Update every second
+            
             # Update UI
             self.start_btn.setEnabled(False)
             self.stop_btn.setEnabled(True)
@@ -575,6 +747,19 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
             self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
             
             self.log_message("✅ Monitor started successfully")
+            
+            # Log selected interfaces for monitoring
+            selected_interfaces = []
+            for i in range(self.interface_list.count()):
+                item = self.interface_list.item(i)
+                if item.checkState() == Qt.CheckState.Checked:
+                    interface_name = item.text().split(' ')[0]  # Get interface name before stats
+                    selected_interfaces.append(interface_name)
+            
+            if selected_interfaces:
+                self.log_message(f"🔍 Selected interfaces: {', '.join(selected_interfaces)}")
+            else:
+                self.log_message("🔍 Monitoring all available interfaces")
             
         except Exception as e:
             self.logger.error(f"Error starting monitor: {e}")
@@ -594,6 +779,13 @@ class EnhancedWiresharkMonitorGUI(QMainWindow):
                 
                 self.log_message("✅ Monitor stopped successfully")
                 
+            # Stop progress tracking
+            if self.timer_update:
+                self.timer_update.stop()
+            self.start_time = None
+            self.progress_bar.setVisible(False)
+            self.timer_label.setText("Timer: Not started")
+            
             # Update UI
             self.start_btn.setEnabled(True)
             self.stop_btn.setEnabled(False)

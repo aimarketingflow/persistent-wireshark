@@ -63,15 +63,6 @@ class PersistentWiresharkMonitor:
             self.logger.warning(f"Could not register signal handlers (not main thread): {e}")
             # This is expected when running in a thread
         
-    def setup_directories(self):
-        """Create necessary directories for PCAP storage"""
-        self.capture_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Create subdirectories for organization
-        (self.capture_dir / "active").mkdir(exist_ok=True)
-        (self.capture_dir / "completed").mkdir(exist_ok=True)
-        (self.capture_dir / "logs").mkdir(exist_ok=True)
-        
     def setup_logging(self):
         """Setup comprehensive logging"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -166,21 +157,61 @@ class PersistentWiresharkMonitor:
                 
         return active_interfaces
         
+    def get_interface_group(self, interface):
+        """Categorize interface into groups for organized file naming"""
+        if interface == 'lo0':
+            return 'loopback'
+        elif interface.startswith('en'):
+            return 'ethernet'
+        elif interface.startswith('awdl'):
+            return 'airdrop'
+        elif interface.startswith('utun'):
+            return 'vpn'
+        elif interface.startswith('llw'):
+            return 'lowlatency'
+        elif interface.startswith('pflog'):
+            return 'firewall'
+        else:
+            return 'other'
+    
     def start_capture(self, interface):
         """Start packet capture on specified interface"""
         if interface in self.active_captures:
             self.logger.warning(f"Capture already active on {interface}")
             return
-            
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        capture_file = self.capture_dir / "active" / f"{interface}_{timestamp}.pcapng"
+        
+        # Use session timestamp for consistent grouping
+        interface_group = self.get_interface_group(interface)
+        
+        # Create organized directory structure using session directory
+        if interface_group == 'loopback':
+            output_dir = self.session_dir / "loopback"
+        else:
+            output_dir = self.session_dir / interface_group
+        
+        output_dir.mkdir(parents=True, exist_ok=True)
+        
+        self.logger.info(f"Starting capture session in: {output_dir}")
+        
+        # Create capture file with organized naming using session timestamp
+        if interface_group == 'loopback':
+            capture_filename = f"{self.session_timestamp}-ch-loopback.pcap"
+        else:
+            capture_filename = f"{self.session_timestamp}-ch-{interface}.pcap"
+        
+        capture_file = output_dir / capture_filename
+        capture_file_abs = capture_file.resolve()
+        
+        self.logger.info(f"📁 PCAP SAVE: {capture_filename}")
+        self.logger.info(f"📂 FULL PATH: {capture_file_abs}")
+        self.logger.info(f"🏷️  GROUP: {interface_group} | INTERFACE: {interface}")
         
         try:
             # Use tshark for capture with rotation
             cmd = [
                 'tshark',
                 '-i', interface,
-                '-w', str(capture_file),
+                '-w', str(capture_file_abs),
                 '-a', f'duration:{self.capture_duration}',  # Auto-stop after duration
                 '-b', 'files:5',  # Keep max 5 files per interface
                 '-q'  # Quiet mode
@@ -193,11 +224,11 @@ class PersistentWiresharkMonitor:
                 'process': process,
                 'start_time': datetime.now(),
                 'capture_file': capture_file,
-                'duration': self.capture_duration
+                'capture_filename': capture_filename,
+                'interface_group': interface_group
             }
             
-            self.logger.info(f"Started capture on {interface} -> {capture_file}")
-            self.logger.info(f"Capture will run for {self.capture_duration/60:.1f} minutes")
+            self.logger.info(f"✅ Started capture on {interface} -> {capture_filename}")
             
             # Send alert if callback provided
             if self.alert_callback:
@@ -210,6 +241,8 @@ class PersistentWiresharkMonitor:
                 daemon=True
             )
             monitor_thread.start()
+            
+            return True
             
         except Exception as e:
             self.logger.error(f"Failed to start capture on {interface}: {e}")
@@ -236,16 +269,6 @@ class PersistentWiresharkMonitor:
             capture_file = self.active_captures[interface]['capture_file']
             if capture_file.exists():
                 completed_file = self.capture_dir / "completed" / capture_file.name
-                capture_file.rename(completed_file)
-                self.logger.info(f"Moved completed capture: {completed_file}")
-                
-            # Remove from active captures
-            del self.active_captures[interface]
-            
-            # Calculate actual duration
-            actual_duration = datetime.now() - start_time
-            self.logger.info(f"Capture on {interface} completed after {actual_duration}")
-            
     def check_new_interfaces(self):
         """Check for new interfaces that weren't previously monitored"""
         current_interfaces = set()
@@ -327,37 +350,26 @@ class PersistentWiresharkMonitor:
         
     def run(self):
         """Main monitoring loop"""
-        self.logger.info("Starting persistent Wireshark monitoring...")
-        self.logger.info(f"Monitoring {len(self.monitored_interfaces)} interfaces")
-        self.logger.info(f"Capture duration: {self.capture_duration/60:.1f} minutes")
+        self.logger.info("Starting Persistent Wireshark Monitor")
+        self.logger.info(f"Capture directory: {self.capture_dir}")
+        self.logger.info(f"Capture duration: {self.capture_duration} seconds")
         self.logger.info(f"Check interval: {self.check_interval} seconds")
         
-        # Always start monitoring default interfaces if they have activity
-        for interface in self.default_interfaces:
-            if interface in self.monitored_interfaces:
-                stats = self.get_interface_stats(interface)
-                if stats['packets'] > 0:
-                    self.logger.info(f"Starting initial monitoring of {interface}")
-                    self.start_capture(interface)
-        
-        iteration = 0
-        while self.running:
-            try:
-                iteration += 1
+        try:
+            while self.running:
+                # Check for active interfaces
+                active_interfaces = self.check_active_interfaces()
                 
-                # Check for new interface activity
-                active_interfaces = self.detect_interface_activity()
-                
-                # Start captures for newly active interfaces
-                for interface in active_interfaces:
-                    if interface not in self.active_captures:
-                        self.start_capture(interface)
-                        
-                # Check for new interfaces every 10 iterations
-                if iteration % 10 == 0:
-                    self.check_new_interfaces()
+                if active_interfaces:
+                    self.logger.info(f"Found {len(active_interfaces)} active interfaces")
                     
-                # Cleanup old files every 100 iterations
+                    # Log currently monitored channels
+                    if self.active_captures:
+                        monitored_channels = []
+                        for interface, capture_info in self.active_captures.items():
+                            group = capture_info.get('interface_group', 'unknown')
+                            monitored_channels.append(f"{interface}({group})")
+                        self.logger.info(f" ACTIVELY MONITORING: {', '.join(monitored_channels)}")
                 if iteration % 100 == 0:
                     self.cleanup_old_captures()
                     
@@ -420,8 +432,8 @@ def main():
     parser = argparse.ArgumentParser(description='Persistent Wireshark Network Monitor')
     parser.add_argument('--capture-dir', default='./pcap_captures',
                        help='Directory to store PCAP files')
-    parser.add_argument('--duration', type=int, default=3600,
-                       help='Capture duration in seconds (60-18000, default: 3600)')
+    parser.add_argument('--duration', type=int, default=30,
+                       help='Capture duration in seconds (30-21600, default: 30)')
     parser.add_argument('--interval', type=int, default=5,
                        help='Check interval in seconds (default: 5)')
     parser.add_argument('--no-alerts', action='store_true',
@@ -431,9 +443,9 @@ def main():
     
     args = parser.parse_args()
     
-    # Validate duration (1 minute to 5 hours)
-    if not 60 <= args.duration <= 18000:
-        print("Error: Duration must be between 60 seconds (1 min) and 18000 seconds (5 hours)")
+    # Validate duration (30 seconds to 6 hours)
+    if not (30 <= args.duration <= 21600):
+        print("Error: Duration must be between 30 seconds and 21600 seconds (6 hours)")
         sys.exit(1)
         
     alert_callback = None if args.no_alerts else alert_notification

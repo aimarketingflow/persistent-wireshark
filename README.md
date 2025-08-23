@@ -1,6 +1,12 @@
 # Persistent Wireshark Monitor
 
-Advanced network interface monitoring system for macOS that automatically detects traffic on any network interface and triggers timed packet captures. Built for cybersecurity professionals and network analysts.
+A robust network monitoring tool that automatically detects active network interfaces and captures packets using Wireshark/tshark. **Specifically designed to resist network overload attacks** that hackers use to disrupt packet capture and forensic analysis.
+
+## 🛡️ Security Purpose
+
+This tool was created to address a critical cybersecurity vulnerability: **hackers often overload networks to interrupt your computer's ability to save Wireshark captures**. Our persistent monitoring system ensures continuous packet capture even under attack conditions.
+
+**[Read Full Security Disclosure](SECURITY_DISCLOSURE.md)**
 
 ## 🚀 Features
 
@@ -11,10 +17,11 @@ Advanced network interface monitoring system for macOS that automatically detect
 - **Selective Monitoring**: Focus on specific interfaces or monitor all
 
 ### Configurable Auto-Capture
-- **Duration Control**: 1 minute to 5 hours per capture session
-- **Auto-Restart**: New sessions start automatically after completion
+- **Duration Control**: Set capture duration from 30 seconds to 6 hours
+- **Auto-Restart**: Continuous monitoring with automatic session restart (default enabled)
+- **Emergency Save**: Automatic data preservation on crashes or force quit
 - **File Rotation**: Prevents disk space issues with automatic cleanup
-- **Organized Storage**: Structured folders for active and completed captures
+- **Custom Intervals**: Configurable check intervals (1-30 seconds)
 
 ### Professional GUI
 - **Dark Theme**: Cybersecurity-focused interface design
