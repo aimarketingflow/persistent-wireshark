@@ -10,20 +10,28 @@ echo "================================"
 SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" &> /dev/null && pwd )"
 cd "$SCRIPT_DIR"
 
-# Check if virtual environment exists
-if [ ! -d "venv" ]; then
-    echo "Creating Python virtual environment..."
-    python3 -m venv venv
-    
+# Define virtual environment directory
+VENV_DIR="$SCRIPT_DIR/venv"
+
+# Activate virtual environment if it exists
+if [ -f "$VENV_DIR/bin/activate" ]; then
     echo "Activating virtual environment..."
-    source venv/bin/activate
+    source "$VENV_DIR/bin/activate"
+fi
+
+# Check for user registration (optional)
+python3 -c "from user_registration import check_and_prompt_registration; check_and_prompt_registration()" 2>/dev/null || true
+
+# Check if virtual environment exists
+if [ ! -d "$VENV_DIR" ]; then
+    echo "Creating Python virtual environment..."
+    python3 -m venv "$VENV_DIR"
     
     echo "Installing dependencies..."
     pip3 install --upgrade pip
     pip3 install -r requirements.txt
 else
-    echo "Activating existing virtual environment..."
-    source venv/bin/activate
+    echo "Virtual environment already exists."
 fi
 
 # Check if PyQt6 is available
