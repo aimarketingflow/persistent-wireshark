@@ -28,11 +28,13 @@
         "slack_webhook": ""
     },
     "maintenance": {
-        "auto_update_check": false,
+        "auto_update_check": true,
+        "update_check_days": 7,
         "cleanup_age_days": 7,
         "compress_after_hours": 24,
         "backup_enabled": false,
-        "backup_directory": ""
+        "backup_directory": "",
+        "last_update_check": ""
     },
     "health_check": {
         "enabled": true,

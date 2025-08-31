@@ -273,6 +273,36 @@ class HealthMonitor:
             issues.append("tshark not capturing")
             self.logger.warning("tshark process not found - captures may have stopped")
         
+        # Check for updates (if enabled)
+        if self.settings.get('maintenance', {}).get('auto_update_check', False):
+            last_check = self.settings.get('maintenance', {}).get('last_update_check')
+            check_interval = self.settings.get('maintenance', {}).get('update_check_days', 7)
+            
+            should_check = True
+            if last_check:
+                from datetime import datetime
+                try:
+                    last_check_date = datetime.fromisoformat(last_check)
+                    days_since = (datetime.now() - last_check_date).days
+                    should_check = days_since >= check_interval
+                except:
+                    pass
+            
+            if should_check:
+                self.logger.info("Checking for StealthShark updates...")
+                try:
+                    import subprocess
+                    result = subprocess.run(
+                        ['python3', 'check_updates.py', '--check'],
+                        cwd=Path(__file__).parent,
+                        capture_output=True,
+                        timeout=10
+                    )
+                    if result.returncode == 1:  # Updates available
+                        self.logger.info("Updates available! Run 'python3 check_updates.py' to update.")
+                except Exception as e:
+                    self.logger.debug(f"Update check failed: {e}")
+        
         # Summary
         if issues:
             self.logger.warning(f"Health check found {len(issues)} issue(s):")
