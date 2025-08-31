@@ -21,6 +21,7 @@ LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST_NAME="com.stealthshark.monitor.plist"
 PLIST_SOURCE="$SCRIPT_DIR/$PLIST_NAME"
 PLIST_DEST="$LAUNCH_AGENTS_DIR/$PLIST_NAME"
+SETTINGS_FILE="$SCRIPT_DIR/stealthshark_settings.json"
 
 # Create logs directory if it doesn't exist
 echo -e "${YELLOW}Creating logs directory...${NC}"
@@ -38,32 +39,94 @@ if [ ! -d "$LAUNCH_AGENTS_DIR" ]; then
     mkdir -p "$LAUNCH_AGENTS_DIR"
 fi
 
-# Ask for duration preference
-echo ""
-read -p "Enter default capture duration in hours (default: 4): " duration
-if [ -z "$duration" ]; then
-    duration="4"
+# Check if settings file exists
+if [ -f "$SETTINGS_FILE" ]; then
+    echo -e "${GREEN}Loading settings from stealthshark_settings.json...${NC}"
+    
+    # Extract settings using Python
+    duration=$(python3 -c "import json; f=open('$SETTINGS_FILE'); d=json.load(f); print(d['autostart']['duration_hours']); f.close()" 2>/dev/null || echo "4")
+    monitor_type=$(python3 -c "import json; f=open('$SETTINGS_FILE'); d=json.load(f); print(d['autostart']['monitor_type']); f.close()" 2>/dev/null || echo "enhanced")
+    interfaces=$(python3 -c "import json; f=open('$SETTINGS_FILE'); d=json.load(f); print(' '.join(d['autostart']['interfaces'])); f.close()" 2>/dev/null || echo "en0")
+    
+    echo "  Duration: $duration hours"
+    echo "  Monitor: $monitor_type"
+    echo "  Interfaces: $interfaces"
+    echo ""
+    
+    # Set monitor command based on saved settings
+    case $monitor_type in
+        "simple")
+            monitor_cmd="python3 simple_tshark_monitor.py $interfaces --duration $duration"
+            ;;
+        "gui")
+            monitor_cmd="python3 gui_memory_monitor.py --duration $duration"
+            ;;
+        *)
+            monitor_cmd="python3 enhanced_memory_monitor.py --duration $duration --interfaces $interfaces"
+            ;;
+    esac
+    
+    # Ask if user wants to use saved settings
+    read -p "Use saved settings? (y/n) [y]: " use_saved
+    if [ "$use_saved" != "n" ] && [ "$use_saved" != "N" ]; then
+        echo -e "${GREEN}Using saved settings${NC}"
+    else
+        # Fall back to manual configuration
+        echo ""
+        read -p "Enter default capture duration in hours (default: 4): " duration
+        if [ -z "$duration" ]; then
+            duration="4"
+        fi
+        
+        echo ""
+        echo "Select monitoring mode:"
+        echo "1. Enhanced Memory Monitor (recommended)"
+        echo "2. Simple TShark Monitor"
+        echo "3. GUI Monitor (PyQt6)"
+        read -p "Select option (1-3) [default: 1]: " mode
+        
+        case $mode in
+            2)
+                monitor_cmd="python3 simple_tshark_monitor.py en0 --duration $duration"
+                ;;
+            3)
+                monitor_cmd="python3 gui_memory_monitor.py --duration $duration"
+                ;;
+            *)
+                monitor_cmd="python3 enhanced_memory_monitor.py --duration $duration"
+                ;;
+        esac
+    fi
+else
+    echo -e "${YELLOW}No saved settings found. Run 'python3 configure_settings.py' to create them.${NC}"
+    
+    # Ask for duration preference
+    echo ""
+    read -p "Enter default capture duration in hours (default: 4): " duration
+    if [ -z "$duration" ]; then
+        duration="4"
+    fi
+    
+    # Ask for monitoring mode
+    echo ""
+    echo "Select monitoring mode:"
+    echo "1. Enhanced Memory Monitor (recommended)"
+    echo "2. Simple TShark Monitor"
+    echo "3. GUI Monitor (PyQt6)"
+    read -p "Select option (1-3) [default: 1]: " mode
+    
+    case $mode in
+        2)
+            monitor_cmd="python3 simple_tshark_monitor.py en0 --duration $duration"
+            ;;
+        3)
+            monitor_cmd="python3 gui_memory_monitor.py --duration $duration"
+            ;;
+        *)
+            monitor_cmd="python3 enhanced_memory_monitor.py --duration $duration"
+            ;;
+    esac
 fi
-
-# Ask for monitoring mode
-echo ""
-echo "Select monitoring mode:"
-echo "1. Enhanced Memory Monitor (recommended)"
-echo "2. Simple TShark Monitor"
-echo "3. GUI Monitor (PyQt6)"
-read -p "Select option (1-3) [default: 1]: " mode
-
-case $mode in
-    2)
-        monitor_cmd="python3 simple_tshark_monitor.py en0 --duration $duration"
-        ;;
-    3)
-        monitor_cmd="python3 gui_memory_monitor.py --duration $duration"
-        ;;
-    *)
-        monitor_cmd="python3 enhanced_memory_monitor.py --duration $duration"
-        ;;
-esac
 
 # Update the plist file with user preferences
 echo -e "${YELLOW}Configuring auto-start with $duration hour rotation...${NC}"
