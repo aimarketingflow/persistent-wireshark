@@ -63,6 +63,40 @@ pip3 install -r requirements.txt
 ./cleanup_captures.command
 ```
 
+### 🚀 Auto-Start on Mac Boot
+
+Configure StealthShark to start automatically when your Mac boots:
+
+**Install Auto-Start**
+```bash
+./install_autostart.sh
+```
+
+The installer will prompt you for:
+- **Duration**: Default capture rotation period (in hours)
+- **Mode**: Enhanced Monitor (recommended), Simple Monitor, or GUI
+
+**Uninstall Auto-Start**
+```bash
+./uninstall_autostart.sh
+```
+
+**Check Status**
+```bash
+launchctl list | grep stealthshark
+```
+
+**Manual Control**
+```bash
+# Stop the service
+launchctl unload ~/Library/LaunchAgents/com.stealthshark.monitor.plist
+
+# Start the service
+launchctl load ~/Library/LaunchAgents/com.stealthshark.monitor.plist
+```
+
+Logs are saved to: `logs/stealthshark.log` and `logs/stealthshark_error.log`
+
 ## 🏗️ Architecture
 
 ### Core Components

@@ -134,9 +134,16 @@ class ConfigDialog(QDialog):
         self.cleanup_threshold_spin.setSingleStep(0.05)
         self.cleanup_threshold_spin.setValue(0.8)
         
+        self.rotation_hours_spin = QDoubleSpinBox()
+        self.rotation_hours_spin.setRange(0.5, 24)
+        self.rotation_hours_spin.setSingleStep(0.5)
+        self.rotation_hours_spin.setValue(4)
+        self.rotation_hours_spin.setSuffix(" hours")
+        
         memory_layout.addRow("Max Memory:", self.max_memory_spin)
         memory_layout.addRow("Max Disk:", self.max_disk_spin)
         memory_layout.addRow("Cleanup Threshold:", self.cleanup_threshold_spin)
+        memory_layout.addRow("Rotation Hours:", self.rotation_hours_spin)
         memory_group.setLayout(memory_layout)
         
         # Monitoring settings
@@ -179,11 +186,12 @@ class ConfigDialog(QDialog):
 class TSharkMonitorGUI(QMainWindow):
     """Main GUI application for TShark monitoring"""
     
-    def __init__(self):
+    def __init__(self, duration_hours=None):
         super().__init__()
-        self.monitor = MemoryOptimizedTSharkMonitor()
+        self.monitor = MemoryOptimizedTSharkMonitor(duration_hours=duration_hours) if MONITOR_AVAILABLE else MemoryOptimizedTSharkMonitor()
         self.monitoring_thread = None
         self.system_tray = None
+        self.duration_hours = duration_hours if duration_hours else 4
         
         self.init_ui()
         self.setup_system_tray()
@@ -623,7 +631,13 @@ def main():
     if not PYQT_AVAILABLE:
         return
         
-    app = QApplication(sys.argv)
+    import argparse
+    parser = argparse.ArgumentParser(description='StealthShark GUI Monitor')
+    parser.add_argument('--duration', type=float, default=None,
+                        help='Capture duration in hours (default: from config or 4)')
+    args = parser.parse_args()
+    
+    app = QApplication(sys.argv[:1])  # Only pass program name to QApplication
     app.setQuitOnLastWindowClosed(False)  # Keep running in system tray
     
     # Set application properties
@@ -631,8 +645,10 @@ def main():
     app.setApplicationVersion("1.0")
     app.setOrganizationName("StealthShark")
     
-    # Create and show main window
-    window = TSharkMonitorGUI()
+    # Create and show main window with duration if specified
+    window = TSharkMonitorGUI(duration_hours=args.duration)
+    if args.duration:
+        window.statusBar().showMessage(f"Monitor configured for {args.duration} hour rotation cycles")
     window.show()
     
     sys.exit(app.exec())

@@ -19,7 +19,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 class SimpleTsharkMonitor:
-    def __init__(self, base_dir):
+    def __init__(self, base_dir, duration_hours=4):
         self.base_dir = Path(base_dir)
         self.capture_dir = self.base_dir / "channel_captures"
         self.capture_dir.mkdir(exist_ok=True)
@@ -27,6 +27,8 @@ class SimpleTsharkMonitor:
         self.log_file = self.base_dir / "simple_monitor.log"
         self.active_captures = {}
         self.running = True
+        self.duration_hours = duration_hours  # Configurable duration
+        self.duration_seconds = duration_hours * 3600  # Convert to seconds
         
         # Setup signal handlers for graceful shutdown
         signal.signal(signal.SIGINT, self.signal_handler)
@@ -56,16 +58,16 @@ class SimpleTsharkMonitor:
                     'exec', '-a', stealth_name,
                     'tshark', '-i', interface,
                     '-w', str(filepath),
-                    '-b', 'duration:14400',  # 4 hours in seconds
-                    '-b', 'files:6',  # Keep 6 files (24 hours total)
+                    '-b', f'duration:{self.duration_seconds}',  # Configurable duration in seconds
+                    '-b', f'files:{int(24 / self.duration_hours)}',  # Keep files for 24 hours total
                     '-q'  # Quiet mode
                 ]
             else:
                 cmd = [
                     'tshark', '-i', interface,
                     '-w', str(filepath),
-                    '-b', 'duration:14400',  # 4 hours in seconds
-                    '-b', 'files:6',  # Keep 6 files (24 hours total)
+                    '-b', f'duration:{self.duration_seconds}',  # Configurable duration in seconds
+                    '-b', f'files:{int(24 / self.duration_hours)}',  # Keep files for 24 hours total
                     '-q'  # Quiet mode
                 ]
             
@@ -183,17 +185,21 @@ class SimpleTsharkMonitor:
 
 def main():
     """Main entry point"""
-    if len(sys.argv) < 2:
-        print("Usage: python3 simple_tshark_monitor.py <interface1> [interface2] ...")
-        print("Example: python3 simple_tshark_monitor.py en0 en1 awdl0")
-        sys.exit(1)
+    import argparse
+    parser = argparse.ArgumentParser(description='StealthShark Simple TShark Monitor')
+    parser.add_argument('interfaces', nargs='+', help='Network interfaces to monitor')
+    parser.add_argument('--duration', type=float, default=4, 
+                        help='Capture duration in hours (default: 4)')
     
-    # Get interfaces from command line
-    interfaces = sys.argv[1:]
+    args = parser.parse_args()
+    interfaces = args.interfaces
+    duration_hours = args.duration
     
-    # Initialize monitor
+    # Initialize monitor with configurable duration
     base_dir = Path(__file__).parent
-    monitor = SimpleTsharkMonitor(base_dir)
+    monitor = SimpleTsharkMonitor(base_dir, duration_hours)
+    
+    logger.info(f"Monitor configured for {duration_hours} hour rotation cycles")
     
     # Stealth process names
     stealth_names = [

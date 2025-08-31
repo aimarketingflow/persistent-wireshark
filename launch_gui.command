@@ -33,9 +33,15 @@ if [ $? -ne 0 ]; then
     pip3 install PyQt6
 fi
 
+# Ask for duration
+read -p "Enter capture duration in hours (default: 4): " duration
+if [ -z "$duration" ]; then
+    duration="4"
+fi
+
 # Launch the GUI
-echo "Launching StealthShark GUI..."
-python3 gui_memory_monitor.py
+echo "Launching StealthShark GUI with $duration hour rotation cycles..."
+python3 gui_memory_monitor.py --duration $duration
 
 echo "StealthShark GUI closed."
 read -p "Press Enter to exit..."

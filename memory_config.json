@@ -2,7 +2,7 @@
   "max_memory_gb": 2,
   "max_disk_gb": 50,
   "cleanup_threshold": 0.8,
-  "rotation_hours": 4,
+  "rotation_hours": 24,
   "interfaces": [
     "en0",
     "en1",

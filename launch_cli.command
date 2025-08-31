@@ -34,12 +34,19 @@ echo "2. Simple TShark Monitor"
 echo "3. Exit"
 echo ""
 
+# Ask for duration
+read -p "Enter capture duration in hours (default: 4): " duration
+if [ -z "$duration" ]; then
+    duration="4"
+fi
+echo "Using $duration hour rotation cycles"
+
 read -p "Select option (1-3): " choice
 
 case $choice in
     1)
-        echo "Launching Enhanced Memory Monitor..."
-        python3 enhanced_memory_monitor.py
+        echo "Launching Enhanced Memory Monitor with $duration hour rotation..."
+        python3 enhanced_memory_monitor.py --duration $duration
         ;;
     2)
         echo "Available interfaces: en0, en1, awdl0"
@@ -47,16 +54,16 @@ case $choice in
         if [ -z "$interfaces" ]; then
             interfaces="en0"
         fi
-        echo "Launching Simple Monitor on: $interfaces"
-        python3 simple_tshark_monitor.py $interfaces
+        echo "Launching Simple Monitor on: $interfaces with $duration hour rotation"
+        python3 simple_tshark_monitor.py $interfaces --duration $duration
         ;;
     3)
         echo "Exiting..."
         exit 0
         ;;
     *)
-        echo "Invalid option. Launching Enhanced Monitor..."
-        python3 enhanced_memory_monitor.py
+        echo "Invalid option. Launching Enhanced Monitor with $duration hour rotation..."
+        python3 enhanced_memory_monitor.py --duration $duration
         ;;
 esac
 

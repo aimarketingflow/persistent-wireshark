@@ -18,7 +18,7 @@ import signal
 import shutil
 
 class MemoryOptimizedTSharkMonitor:
-    def __init__(self, base_dir=None):
+    def __init__(self, base_dir=None, duration_hours=None):
         self.base_dir = Path(base_dir) if base_dir else Path(__file__).parent
         self.capture_dir = self.base_dir / "channel_captures"
         self.log_file = self.base_dir / "enhanced_memory_monitor.log"
@@ -29,7 +29,7 @@ class MemoryOptimizedTSharkMonitor:
         self.max_memory_usage = 2 * 1024 * 1024 * 1024  # 2GB default
         self.max_disk_usage = 50 * 1024 * 1024 * 1024   # 50GB default
         self.cleanup_threshold = 0.8  # Cleanup at 80% capacity
-        self.rotation_hours = 4
+        self.rotation_hours = duration_hours if duration_hours else 4  # Allow override
         self.max_files_per_interface = 24
         
         # Process tracking
@@ -105,7 +105,9 @@ class MemoryOptimizedTSharkMonitor:
         self.max_memory_usage = config["max_memory_gb"] * 1024 * 1024 * 1024
         self.max_disk_usage = config["max_disk_gb"] * 1024 * 1024 * 1024
         self.cleanup_threshold = config["cleanup_threshold"]
-        self.rotation_hours = config["rotation_hours"]
+        # Only update rotation_hours if not already set via constructor
+        if not hasattr(self, 'rotation_hours') or self.rotation_hours == 4:
+            self.rotation_hours = config["rotation_hours"]
         self.interfaces = config["interfaces"]
         self.stealth_names = config["stealth_names"]
         self.compression_enabled = config["compression_enabled"]
@@ -225,7 +227,7 @@ class MemoryOptimizedTSharkMonitor:
                 'tshark', '-i', interface,
                 '-w', str(filepath),
                 '-b', f'duration:{self.rotation_hours * 3600}',  # Rotate every N hours
-                '-b', 'files:24',  # Keep max 24 files per interface
+                '-b', f'files:{int(24 / self.rotation_hours)}',  # Keep files for 24 hours total
                 '-q'  # Quiet mode
             ]
             
@@ -390,11 +392,23 @@ class MemoryOptimizedTSharkMonitor:
 
 def main():
     """Main entry point for standalone execution"""
-    monitor = MemoryOptimizedTSharkMonitor()
+    import argparse
+    parser = argparse.ArgumentParser(description='StealthShark Enhanced Memory Monitor')
+    parser.add_argument('--duration', type=float, default=None,
+                        help='Capture duration in hours (default: from config or 4)')
+    parser.add_argument('--interfaces', nargs='+', default=None,
+                        help='Network interfaces to monitor (default: from config)')
+    
+    args = parser.parse_args()
+    monitor = MemoryOptimizedTSharkMonitor(duration_hours=args.duration)
     
     try:
         # Start monitoring
-        monitor.start_monitoring()
+        interfaces = args.interfaces if args.interfaces else None
+        monitor.start_monitoring(interfaces)
+        
+        if args.duration:
+            print(f"Monitor configured for {args.duration} hour rotation cycles")
         
         # Keep running until interrupted
         while True:
