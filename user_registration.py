@@ -51,10 +51,13 @@ class UserRegistration:
         if hasattr(self.user_file, 'chmod'):
             self.user_file.chmod(0o600)  # Read/write for owner only
     
-    def generate_user_id(self) -> str:
-        """Generate unique user ID"""
+    def generate_user_id(self, email: str = "") -> str:
+        """Generate user ID from email or UUID"""
         if 'user_id' in self.user_data:
             return self.user_data['user_id']
+        # Use email hash as ID if provided, otherwise UUID
+        if email:
+            return self.hash_email(email)
         return str(uuid.uuid4())
     
     def hash_email(self, email: str) -> str:
@@ -64,8 +67,8 @@ class UserRegistration:
     def register_user(self, name: str = "", email: str = "") -> Dict[str, Any]:
         """Register user with optional name and email"""
         
-        # Generate or get user ID
-        user_id = self.generate_user_id()
+        # Generate or get user ID (use email if provided)
+        user_id = self.generate_user_id(email)
         
         # Prepare registration data
         registration = {
@@ -192,7 +195,7 @@ class UserRegistration:
             print(f"\n✅ {result['message']}")
             if name:
                 print(f"   Welcome, {name}!")
-            print(f"   User ID: {result['user_id'][:8]}...")
+            # Don't display user ID for privacy
             return True
         
         return False
@@ -239,7 +242,7 @@ def main():
             info = reg.get_registration_info()
             if info['registered']:
                 print(f"Registered: Yes")
-                print(f"User ID: {info['user_id'][:8]}...")
+                # Don't display user ID for privacy
                 if 'name' in info:
                     print(f"Name: {info['name']}")
                 if 'email' in info:
