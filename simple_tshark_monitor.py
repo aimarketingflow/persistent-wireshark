@@ -52,24 +52,14 @@ class SimpleTsharkMonitor:
             filename = f"{interface}_capture_{timestamp}.pcapng"
             filepath = self.capture_dir / filename
             
-            # Build command - use stealth process name if provided
-            if stealth_name:
-                cmd = [
-                    'exec', '-a', stealth_name,
-                    'tshark', '-i', interface,
-                    '-w', str(filepath),
-                    '-b', f'duration:{self.duration_seconds}',  # Configurable duration in seconds
-                    '-b', f'files:{int(24 / self.duration_hours)}',  # Keep files for 24 hours total
-                    '-q'  # Quiet mode
-                ]
-            else:
-                cmd = [
-                    'tshark', '-i', interface,
-                    '-w', str(filepath),
-                    '-b', f'duration:{self.duration_seconds}',  # Configurable duration in seconds
-                    '-b', f'files:{int(24 / self.duration_hours)}',  # Keep files for 24 hours total
-                    '-q'  # Quiet mode
-                ]
+            # Build command - simplified without exec stealth
+            cmd = [
+                'tshark', '-i', interface,
+                '-w', str(filepath),
+                '-b', f'duration:{self.duration_seconds}',  # Configurable duration in seconds
+                '-b', f'files:{max(1, int(24 / self.duration_hours))}',  # Keep files for 24 hours total
+                '-q'  # Quiet mode
+            ]
             
             # Start the process
             process = subprocess.Popen(
@@ -154,8 +144,14 @@ class SimpleTsharkMonitor:
         return status
         
     def monitor_loop(self):
-        """Main monitoring loop"""
+        """Main monitoring loop with countdown timer"""
         logger.info("Starting monitoring loop...")
+        logger.info(f"\n{'='*60}")
+        logger.info(f"📊 Monitor started for {self.duration_hours} hour rotation cycles")
+        logger.info(f"📁 Captures saving to: {self.capture_dir}")
+        logger.info(f"{'='*60}\n")
+        
+        last_display = 0
         
         while self.running:
             try:
@@ -171,13 +167,40 @@ class SimpleTsharkMonitor:
                     del self.active_captures[interface]
                     logger.info(f"Cleaned up dead process for {interface}")
                 
+                # Display countdown timer for active captures
+                current_time = time.time()
+                if current_time - last_display >= 10:  # Update display every 10 seconds
+                    print("\n" + "="*70)
+                    print(f"🦈 StealthShark Monitor Status - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    print("="*70)
+                    
+                    if self.active_captures:
+                        for interface, info in self.active_captures.items():
+                            elapsed = datetime.now() - info['start_time']
+                            remaining = timedelta(seconds=self.duration_seconds) - elapsed
+                            
+                            if remaining.total_seconds() > 0:
+                                hours = int(remaining.total_seconds() // 3600)
+                                minutes = int((remaining.total_seconds() % 3600) // 60)
+                                seconds = int(remaining.total_seconds() % 60)
+                                
+                                print(f"📡 {interface}: Capturing... Time remaining: {hours:02d}:{minutes:02d}:{seconds:02d}")
+                                print(f"   └─ PID: {info['pid']} | Disguised as: {info['stealth_name']}")
+                            else:
+                                print(f"📡 {interface}: Rotation pending...")
+                    else:
+                        print("⚠️  No active captures")
+                    
+                    print("="*70)
+                    last_display = current_time
+                
                 # Save status
                 status = self.get_status()
                 status_file = self.base_dir / "monitor_status.json"
                 with open(status_file, 'w') as f:
                     json.dump(status, f, indent=2)
                 
-                time.sleep(30)  # Check every 30 seconds
+                time.sleep(5)  # Check every 5 seconds for smoother countdown
                 
             except Exception as e:
                 logger.error(f"Error in monitoring loop: {e}")

@@ -15,11 +15,139 @@ from PyQt6.QtWidgets import (QApplication, QMainWindow, QVBoxLayout, QHBoxLayout
                             QWidget, QPushButton, QLabel, QTextEdit, QTableWidget, 
                             QTableWidgetItem, QProgressBar, QGroupBox, QLineEdit,
                             QCheckBox, QSpinBox, QTabWidget, QMessageBox, QComboBox,
-                            QSlider, QFileDialog, QListWidget, QSplitter)
+                            QSlider, QFileDialog, QListWidget, QSplitter, QDialog)
 from PyQt6.QtCore import QTimer, QThread, pyqtSignal, Qt, QSize
 from PyQt6.QtGui import QFont, QColor, QPalette, QPixmap, QIcon
 import psutil
 from persistent_wireshark_monitor import PersistentWiresharkMonitor
+import os
+import requests
+import time
+
+class UpdateDialog(QDialog):
+    """Dialog for showing update notifications"""
+    def __init__(self, parent=None, update_info=None):
+        super().__init__(parent)
+        self.update_info = update_info or {}
+        self.init_ui()
+    
+    def init_ui(self):
+        self.setWindowTitle("🦈 StealthShark Update Available")
+        self.setFixedSize(500, 300)
+        
+        layout = QVBoxLayout()
+        
+        # Update icon and title
+        title = QLabel("🔄 Update Available!")
+        title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title.setStyleSheet("font-size: 20px; font-weight: bold; color: #4CAF50; padding: 10px;")
+        layout.addWidget(title)
+        
+        # Version info
+        version_box = QGroupBox("Version Information")
+        version_layout = QVBoxLayout()
+        
+        current = QLabel(f"Current Version: {self.update_info.get('current', 'Unknown')[:8]}")
+        latest = QLabel(f"Latest Version: {self.update_info.get('latest', 'Unknown')[:8]}")
+        message = QLabel(f"Update: {self.update_info.get('message', 'New features and improvements')}")
+        
+        version_layout.addWidget(current)
+        version_layout.addWidget(latest)
+        version_layout.addWidget(message)
+        version_box.setLayout(version_layout)
+        layout.addWidget(version_box)
+        
+        # Info text
+        info = QLabel("Your settings will be backed up automatically before updating.")
+        info.setWordWrap(True)
+        info.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        info.setStyleSheet("color: #999; padding: 10px;")
+        layout.addWidget(info)
+        
+        # Buttons
+        button_layout = QHBoxLayout()
+        
+        self.update_btn = QPushButton("Install Update")
+        self.update_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 10px 20px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        self.update_btn.clicked.connect(self.install_update)
+        
+        self.later_btn = QPushButton("Remind Me Later")
+        self.later_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #666;
+                color: white;
+                padding: 10px 20px;
+                border-radius: 5px;
+            }
+            QPushButton:hover {
+                background-color: #555;
+            }
+        """)
+        self.later_btn.clicked.connect(self.reject)
+        
+        button_layout.addWidget(self.update_btn)
+        button_layout.addWidget(self.later_btn)
+        layout.addLayout(button_layout)
+        
+        self.setLayout(layout)
+        
+        # Apply dark theme
+        self.setStyleSheet("""
+            QDialog {
+                background-color: #2b2b2b;
+                color: #ffffff;
+            }
+            QGroupBox {
+                border: 2px solid #555;
+                border-radius: 5px;
+                margin-top: 10px;
+                padding-top: 10px;
+                background-color: #3c3c3c;
+            }
+            QGroupBox::title {
+                color: #4CAF50;
+                subcontrol-origin: margin;
+                left: 10px;
+                padding: 0 5px;
+            }
+            QLabel {
+                color: #ffffff;
+            }
+        """)
+    
+    def install_update(self):
+        """Handle update installation"""
+        reply = QMessageBox.question(
+            self,
+            "Confirm Update",
+            "StealthShark will restart after the update.\nContinue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+        
+        if reply == QMessageBox.StandardButton.Yes:
+            # Run update in background
+            QMessageBox.information(self, "Updating", "Downloading update...\nStealthShark will restart shortly.")
+            
+            # Run update command
+            try:
+                subprocess.Popen(['python3', 'check_updates.py', '--auto'],
+                               cwd=Path(__file__).parent)
+                self.accept()
+                # Close the main application to restart
+                QApplication.quit()
+            except Exception as e:
+                QMessageBox.critical(self, "Update Failed", f"Failed to install update: {e}")
 
 class MonitorThread(QThread):
     """Background thread for running the Wireshark monitor"""
@@ -28,6 +156,7 @@ class MonitorThread(QThread):
     capture_completed = pyqtSignal(str, str)
     status_update = pyqtSignal(dict)
     alert_signal = pyqtSignal(str)
+    batch_alert_signal = pyqtSignal(list)  # For batched alerts
     
     def __init__(self, capture_dir, duration, interval):
         super().__init__()
@@ -36,6 +165,7 @@ class MonitorThread(QThread):
         self.interval = interval
         self.monitor = None
         self.running = False
+        self.startup_captures = []  # Collect startup captures
         
     def alert_callback(self, message):
         """Callback for monitor alerts"""
@@ -59,7 +189,8 @@ class MonitorThread(QThread):
             result = original_start_capture(interface)
             if interface in self.monitor.active_captures:
                 capture_info = self.monitor.active_captures[interface]
-                self.capture_started.emit(interface, str(capture_info['capture_file']))
+                # Collect startup captures instead of emitting immediately
+                self.startup_captures.append((interface, str(capture_info['capture_file'])))
             return result
             
         def enhanced_monitor_capture(interface):
@@ -71,7 +202,30 @@ class MonitorThread(QThread):
         self.monitor.monitor_capture = enhanced_monitor_capture
         
         try:
-            self.monitor.run()
+            # Collect startup captures by running monitor briefly
+            import threading
+            monitor_thread = threading.Thread(target=self.monitor.run)
+            monitor_thread.daemon = True
+            monitor_thread.start()
+            
+            # Wait a moment for captures to start
+            time.sleep(2)
+            
+            # Emit all startup captures as a batch
+            if self.startup_captures:
+                messages = [f"Started packet capture on {iface}" for iface, _ in self.startup_captures]
+                self.batch_alert_signal.emit(messages)
+                
+                # Also emit individual capture_started signals for table updates
+                for interface, filename in self.startup_captures:
+                    self.capture_started.emit(interface, filename)
+                
+                self.startup_captures = []
+            
+            # Keep thread alive while monitor runs
+            while self.running and self.monitor.running:
+                time.sleep(1)
+                
         except Exception as e:
             self.alert_signal.emit(f"Monitor error: {e}")
             
@@ -90,8 +244,58 @@ class WiresharkMonitorGUI(QMainWindow):
         self.duration = 3600  # 1 hour default
         self.interval = 5     # 5 seconds default
         
+        # Alert batching
+        self.alert_queue = []
+        self.alert_timer = None
+        self.last_alert_time = 0
+        
+        # Countdown timer
+        self.capture_start_time = None
+        self.countdown_timer = None
+        
         self.init_ui()
         self.setup_timers()
+        
+        # Check for updates on startup
+        QTimer.singleShot(1000, self.check_for_updates)
+    
+    def check_for_updates(self):
+        """Check for StealthShark updates"""
+        try:
+            # Check for updates using subprocess
+            result = subprocess.run(
+                ['python3', 'check_updates.py', '--check'],
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).parent,
+                timeout=5
+            )
+            
+            # Parse the output to detect if update is available
+            if result.returncode == 1 and 'Update available' in result.stdout:
+                # Extract version info from output
+                lines = result.stdout.strip().split('\n')
+                update_info = {
+                    'current': 'Unknown',
+                    'latest': 'Unknown',
+                    'message': 'New features and improvements'
+                }
+                
+                for line in lines:
+                    if 'Current version:' in line:
+                        update_info['current'] = line.split(':')[1].strip()
+                    elif 'Latest version:' in line:
+                        update_info['latest'] = line.split(':')[1].strip()
+                    elif 'Latest commit:' in line:
+                        update_info['message'] = line.split(':')[1].strip()
+                
+                # Show update dialog
+                dialog = UpdateDialog(self, update_info)
+                dialog.exec()
+        except subprocess.TimeoutExpired:
+            print("Update check timed out")
+        except Exception as e:
+            print(f"Update check failed: {e}")
         
     def init_ui(self):
         """Initialize the user interface"""
@@ -432,6 +636,10 @@ class WiresharkMonitorGUI(QMainWindow):
         if self.monitor_thread and self.monitor_thread.isRunning():
             return
             
+        # Update duration and interval from UI controls
+        self.update_duration(self.duration_combo.currentText())
+        self.update_interval(self.interval_slider.value())
+        
         self.log_message("🚀 Starting Wireshark Monitor...")
         self.log_message(f"📁 Capture Directory: {self.capture_dir}")
         self.log_message(f"⏱️ Duration: {self.duration/60:.1f} minutes")
@@ -449,6 +657,7 @@ class WiresharkMonitorGUI(QMainWindow):
         self.monitor_thread.capture_completed.connect(self.on_capture_completed)
         self.monitor_thread.status_update.connect(self.on_status_update)
         self.monitor_thread.alert_signal.connect(self.on_alert)
+        self.monitor_thread.batch_alert_signal.connect(self.on_batch_alert)
         
         self.monitor_thread.start()
         
@@ -458,12 +667,22 @@ class WiresharkMonitorGUI(QMainWindow):
         self.status_label.setText("Status: Running")
         self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
         
+        # Start countdown timer
+        self.capture_start_time = datetime.now()
+        if self.countdown_timer:
+            self.countdown_timer.stop()
+        self.countdown_timer = QTimer()
+        self.countdown_timer.timeout.connect(self.update_countdown)
+        self.countdown_timer.start(1000)  # Update every second
+        self.update_countdown()
+        
     def stop_monitor(self):
         """Stop the monitor"""
         if self.monitor_thread:
             self.log_message("🛑 Stopping Wireshark Monitor...")
             self.monitor_thread.stop()
             self.monitor_thread.wait(5000)  # Wait up to 5 seconds
+            self.monitor_thread = None  # Clear the thread reference
             
         # Update UI
         self.start_btn.setEnabled(True)
@@ -471,6 +690,36 @@ class WiresharkMonitorGUI(QMainWindow):
         self.status_label.setText("Status: Stopped")
         self.status_label.setStyleSheet("color: #ff6b6b; font-weight: bold;")
         
+        # Stop countdown timer
+        if self.countdown_timer:
+            self.countdown_timer.stop()
+            self.countdown_timer = None
+        self.capture_start_time = None
+        
+    def update_countdown(self):
+        """Update countdown timer display"""
+        if not self.capture_start_time or not self.monitor_thread:
+            return
+            
+        elapsed = (datetime.now() - self.capture_start_time).total_seconds()
+        remaining = max(0, self.duration - elapsed)
+        
+        hours = int(remaining // 3600)
+        minutes = int((remaining % 3600) // 60)
+        seconds = int(remaining % 60)
+        
+        countdown_text = f"⏰ Time Remaining: {hours:02d}:{minutes:02d}:{seconds:02d}"
+        
+        # Update status label with countdown
+        if remaining > 0:
+            self.status_label.setText(f"Status: Running - {countdown_text}")
+            self.status_label.setStyleSheet("color: #4CAF50; font-weight: bold;")
+        else:
+            self.status_label.setText("Status: Capture Complete")
+            self.status_label.setStyleSheet("color: #ffa500; font-weight: bold;")
+            if self.countdown_timer:
+                self.countdown_timer.stop()
+    
     def update_interface_stats(self):
         """Update interface statistics table"""
         if not self.monitor_thread or not self.monitor_thread.isRunning():
@@ -568,7 +817,7 @@ class WiresharkMonitorGUI(QMainWindow):
         """Handle capture started signal"""
         self.log_message(f"🎬 Started capture on {interface}: {filename}")
         
-        # Update captures table
+        # Update captures table only - alerts handled separately
         row = self.captures_table.rowCount()
         self.captures_table.insertRow(row)
         self.captures_table.setItem(row, 0, QTableWidgetItem(interface))
@@ -585,14 +834,96 @@ class WiresharkMonitorGUI(QMainWindow):
         self.log_message(f"📊 Status: {status}")
         
     def on_alert(self, message):
-        """Handle alert signal"""
-        self.log_message(f"🚨 ALERT: {message}")
+        """Handle alert signal with batching"""
+        # Don't log capture started messages as alerts
+        if "Started packet capture" not in message:
+            self.log_message(f"🚨 ALERT: {message}")
+        
+        current_time = time.time()
+        
+        # Always add to queue
+        self.alert_queue.append(message)
+        
+        # Cancel existing timer if any
+        if self.alert_timer:
+            self.alert_timer.stop()
+        
+        # Create timer to show alerts after delay
+        self.alert_timer = QTimer()
+        self.alert_timer.timeout.connect(self.show_batched_alerts)
+        self.alert_timer.setSingleShot(True)
+        
+        # Use longer delay if this is close to last alert
+        if current_time - self.last_alert_time < 2.0:
+            self.alert_timer.start(1000)  # Wait 1 second for more alerts
+        else:
+            self.alert_timer.start(500)  # Shorter wait for single alert
+        
+        self.last_alert_time = current_time
+    
+    def show_batched_alerts(self):
+        """Show batched alerts in single dialog"""
+        if not self.alert_queue:
+            return
+            
+        # Deduplicate similar messages
+        unique_alerts = []
+        for alert in self.alert_queue:
+            if alert not in unique_alerts:
+                unique_alerts.append(alert)
+        
+        # Combine messages
+        if len(unique_alerts) == 1:
+            combined_message = unique_alerts[0]
+        else:
+            # Group capture started messages
+            capture_messages = [msg for msg in unique_alerts if "Started packet capture" in msg]
+            other_messages = [msg for msg in unique_alerts if "Started packet capture" not in msg]
+            
+            if capture_messages and not other_messages:
+                # Only capture messages - show simplified
+                interfaces = [msg.replace("Started packet capture on ", "") for msg in capture_messages]
+                combined_message = f"Started packet capture on {len(interfaces)} interface(s):\n\n"
+                combined_message += "\n".join(f"• {iface}" for iface in interfaces)
+            else:
+                # Mix of messages
+                combined_message = f"StealthShark Monitor Notifications ({len(unique_alerts)}):\n\n"
+                combined_message += "\n".join(f"• {msg}" for msg in unique_alerts)
         
         # Show popup notification
         msg = QMessageBox()
-        msg.setIcon(QMessageBox.Icon.Warning)
-        msg.setWindowTitle("Wireshark Monitor Alert")
-        msg.setText(message)
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("🦈 StealthShark Monitor")
+        msg.setText(combined_message)
+        msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+        msg.exec()
+        
+        # Clear queue
+        self.alert_queue = []
+    
+    def on_batch_alert(self, messages):
+        """Handle batch of alerts"""
+        if not messages:
+            return
+            
+        # Show combined alert
+        if len(messages) == 1:
+            combined_message = messages[0]
+        else:
+            # Group capture messages
+            interfaces = [msg.replace("Started packet capture on ", "") for msg in messages if "Started packet capture" in msg]
+            if interfaces:
+                combined_message = f"Started packet capture on {len(interfaces)} interface(s):\n\n"
+                combined_message += "\n".join(f"• {iface}" for iface in interfaces)
+            else:
+                combined_message = f"StealthShark Monitor ({len(messages)} notifications):\n\n"
+                combined_message += "\n".join(f"• {msg}" for msg in messages)
+        
+        # Show popup
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Icon.Information)
+        msg.setWindowTitle("🦈 StealthShark Monitor")
+        msg.setText(combined_message)
         msg.setStandardButtons(QMessageBox.StandardButton.Ok)
         msg.exec()
         

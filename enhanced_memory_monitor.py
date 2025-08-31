@@ -227,7 +227,7 @@ class MemoryOptimizedTSharkMonitor:
                 'tshark', '-i', interface,
                 '-w', str(filepath),
                 '-b', f'duration:{self.rotation_hours * 3600}',  # Rotate every N hours
-                '-b', f'files:{int(24 / self.rotation_hours)}',  # Keep files for 24 hours total
+                '-b', f'files:{max(1, int(24 / self.rotation_hours))}',  # Keep files for 24 hours total
                 '-q'  # Quiet mode
             ]
             
@@ -343,9 +343,46 @@ class MemoryOptimizedTSharkMonitor:
         self.logger.info("StealthShark monitoring system started")
         
     def _monitoring_loop(self):
-        """Background monitoring loop"""
+        """Background monitoring loop with countdown timer"""
+        last_display = 0
+        print(f"\n{'='*60}")
+        print(f"📊 Monitor started for {self.rotation_hours} hour rotation cycles")
+        print(f"📁 Captures saving to: {self.capture_dir}")
+        print(f"{'='*60}\n")
+        
         while self.monitoring_active:
             try:
+                # Display countdown timer
+                current_time = time.time()
+                if current_time - last_display >= 10:  # Update every 10 seconds
+                    print("\n" + "="*70)
+                    print(f"🦈 StealthShark Monitor Status - {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+                    print("="*70)
+                    
+                    if self.active_captures:
+                        for interface, info in self.active_captures.items():
+                            elapsed = datetime.now() - info['start_time']
+                            remaining_seconds = (self.rotation_hours * 3600) - elapsed.total_seconds()
+                            
+                            if remaining_seconds > 0:
+                                hours = int(remaining_seconds // 3600)
+                                minutes = int((remaining_seconds % 3600) // 60)
+                                seconds = int(remaining_seconds % 60)
+                                
+                                print(f"📡 {interface}: Capturing... Time remaining: {hours:02d}:{minutes:02d}:{seconds:02d}")
+                                print(f"   └─ PID: {info['pid']} | Disguised as: {info['stealth_name']}")
+                            else:
+                                print(f"📡 {interface}: Rotation pending...")
+                    else:
+                        print("⚠️  No active captures")
+                    
+                    # Memory status
+                    mem_usage = psutil.virtual_memory().percent
+                    disk_usage = psutil.disk_usage(str(self.capture_dir)).percent if self.capture_dir.exists() else 0
+                    print(f"\n💾 Memory: {mem_usage:.1f}% | Disk: {disk_usage:.1f}%")
+                    print("="*70)
+                    last_display = current_time
+                
                 # Update status
                 status = self.get_system_status()
                 if status:

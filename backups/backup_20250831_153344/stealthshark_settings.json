@@ -3,9 +3,7 @@
         "enabled": false,
         "monitor_type": "enhanced",
         "duration_hours": 4,
-        "interfaces": [
-            "en0"
-        ],
+        "interfaces": ["en0"],
         "start_on_boot": true,
         "restart_on_crash": true,
         "max_retries": 5
@@ -36,7 +34,7 @@
         "compress_after_hours": 24,
         "backup_enabled": false,
         "backup_directory": "",
-        "last_update_check": "2025-08-31T15:33:46.968329"
+        "last_update_check": ""
     },
     "health_check": {
         "enabled": true,
