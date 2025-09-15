@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# StealthShark Anti-Pineapple Detection System
+# Desktop Launcher for macOS
+# AIMF LLC - MobileShield Ecosystem v1.0
+
+# Get the directory where StealthShark is installed
+STEALTHSHARK_DIR="/Users/flowgirl/Documents/StealthShark-PublicRelease"
+
+# Change to the StealthShark directory
+cd "$STEALTHSHARK_DIR"
+
+# Launch StealthShark using the existing launch script
+exec ./launch.sh
