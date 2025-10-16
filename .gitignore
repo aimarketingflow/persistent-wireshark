@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+*.egg-info/
+dist/
+build/
+
+# Virtual environments
+venv/
+venv_*/
+*_venv/
+ENV/
+env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# StealthShark specific
+logs/
+*.log
+pcap_captures/
+*.pcap
+*.pcapng
+gui_logs/
+persistent_logs/
+analysis_results/
+backups/
+*.backup.*
+
+# Sensitive data
+*chatlog*
+*Chatlog*
+_Chatlogs/
+nfc_tags.json.backup
+
+# Session data
+session_state.json
+*_status_*.json

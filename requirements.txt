@@ -1,0 +1,19 @@
+#!/usr/bin/env python3
+# StealthShark Requirements
+# Network monitoring and packet capture system
+
+# Core dependencies
+psutil>=5.9.0
+PyQt6>=6.5.0
+pyqt6-tools>=6.4.2.3.3
+requests>=2.31.0
+
+# Optional dependencies for enhanced functionality
+# Uncomment if needed:
+# cryptography>=3.4.8
+# scapy>=2.4.5
+
+# Development dependencies (optional)
+# pytest>=7.0.0
+# black>=22.0.0
+# flake8>=4.0.0
